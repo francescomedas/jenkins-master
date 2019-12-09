@@ -1,4 +1,4 @@
 // Output
 output "lb_endpoint" {
-  value = aws_elb.master.dns_name
+  value = aws_lb.master.dns_name
 }

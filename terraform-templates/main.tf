@@ -3,18 +3,17 @@ provider "aws" {
 }
 
 resource "aws_autoscaling_group" "master" {
-  name                      = "jenkins-master"
-  max_size                  = 1
-  min_size                  = 1
-  desired_capacity          = 1
-  force_delete              = true
-  launch_configuration      = aws_launch_configuration.master.name
-  health_check_type         = "ELB"
-  health_check_grace_period = 900
-  load_balancers            = ["${aws_elb.master.id}"]
-  termination_policies      = ["OldestLaunchConfiguration"]
-  vpc_zone_identifier       = [element(var.private_subnet_ids, 0)]
-  depends_on                = [aws_launch_configuration.master]
+  name                 = "jenkins-master"
+  max_size             = 1
+  min_size             = 1
+  desired_capacity     = 1
+  force_delete         = true
+  launch_configuration = aws_launch_configuration.master.name
+  health_check_type    = "EC2"
+  target_group_arns    = [aws_lb_target_group.master.arn]
+  termination_policies = ["OldestLaunchConfiguration"]
+  vpc_zone_identifier  = [element(var.private_subnet_ids, 0)]
+  depends_on           = [aws_launch_configuration.master]
   lifecycle {
     create_before_destroy = true
   }
@@ -53,42 +52,6 @@ data "template_file" "master_user_data" {
   }
 }
 
-resource "aws_elb" "master" {
-  name            = "jenkins-master-elb"
-  internal        = true
-  security_groups = ["${aws_security_group.master.id}"]
-  subnets         = var.public_subnet_ids
-
-  listener {
-    instance_port     = 443
-    instance_protocol = "tcp"
-    lb_port           = 443
-    lb_protocol       = "tcp"
-  }
-
-  listener {
-    instance_port     = 8080
-    instance_protocol = "http"
-    lb_port           = 8080
-    lb_protocol       = "http"
-  }
-
-  health_check {
-    healthy_threshold   = 3
-    unhealthy_threshold = 5
-    timeout             = 5
-    target              = "HTTP:80/_health_check"
-    interval            = 60
-  }
-
-  cross_zone_load_balancing   = true
-  idle_timeout                = 300
-  connection_draining         = true
-  connection_draining_timeout = 60
-
-  tags = var.resources_tags
-}
-
 resource "aws_efs_mount_target" "master" {
   file_system_id  = aws_efs_file_system.master.id
   subnet_id       = element(var.private_subnet_ids, 0)
@@ -98,4 +61,33 @@ resource "aws_efs_mount_target" "master" {
 resource "aws_efs_file_system" "master" {
   creation_token = "JenkinsMaster"
   tags           = var.resources_tags
+}
+
+resource "aws_lb" "master" {
+  name                       = "jenkins-master"
+  internal                   = false
+  load_balancer_type         = "network"
+  subnets                    = var.public_subnet_ids
+  enable_deletion_protection = false
+  tags                       = var.resources_tags
+}
+
+resource "aws_lb_listener" "master" {
+  load_balancer_arn = aws_lb.master.arn
+  port              = "80"
+  protocol          = "TCP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.master.arn
+  }
+}
+
+resource "aws_lb_target_group" "master" {
+  name_prefix = "jm"
+  port        = 8080
+  protocol    = "TCP"
+  vpc_id      = var.vpc_id
+  lifecycle {
+    create_before_destroy = true
+  }
 }
